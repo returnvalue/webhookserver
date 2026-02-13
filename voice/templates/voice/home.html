@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Webhook Server Home</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #13243a;
+      --muted: #5b6a7f;
+      --border: #d9e1ea;
+      --link: #005fcc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: linear-gradient(160deg, #ffffff 0%, var(--bg) 100%);
+    }
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem;
+    }
+    h1 {
+      margin-top: 0;
+      margin-bottom: 1rem;
+      font-size: 1.9rem;
+    }
+    .grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+    .card h2 {
+      margin-top: 0;
+      margin-bottom: 0.4rem;
+      font-size: 1.1rem;
+    }
+    .card p {
+      margin-top: 0;
+      margin-bottom: 0.9rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .card a {
+      color: var(--link);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .card a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Webhook Server</h1>
+  <div class="grid">
+    <section class="card">
+      <h2>View Events</h2>
+      <p>Watch incoming webhook events update on a live page as they arrive.</p>
+      <a href="/events">Open View Events</a>
+    </section>
+
+    <section class="card">
+      <h2>Place Call</h2>
+      <p>Enter a destination phone number and trigger an outbound call from this app.</p>
+      <a href="/placecall">Open Place Call</a>
+    </section>
+  </div>
+</main>
+</body>
+</html>

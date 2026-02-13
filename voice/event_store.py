@@ -68,7 +68,16 @@ def list_events():
         return list(_events)
 
 
+def list_events_since(since_id):
+    with _lock:
+        return [event for event in _events if event["id"] > since_id]
+
+
+def latest_event_id():
+    with _lock:
+        return _events[0]["id"] if _events else None
+
+
 def clear_events():
     with _lock:
         _events.clear()
-

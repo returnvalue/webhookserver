@@ -20,6 +20,8 @@ from voice import views as voice_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path("", voice_views.home, name="home"),
     path("events", voice_views.events_page, name="view-events"),
+    path("placecall", voice_views.placecall, name="placecall"),
     path('webhook/', include('voice.urls')),
 ]

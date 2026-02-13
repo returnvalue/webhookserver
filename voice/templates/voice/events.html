@@ -15,12 +15,9 @@
       --ok: #117a37;
       --warn: #a56b00;
       --bad: #9f1d1d;
-      --accent: #0d6efd;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -44,10 +41,7 @@
       margin-bottom: 1rem;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 1.7rem;
-    }
+    h1 { margin: 0; font-size: 1.7rem; }
 
     .controls {
       display: flex;
@@ -94,14 +88,26 @@
       cursor: pointer;
     }
 
-    button:hover {
-      background: #be2f2f;
-    }
+    button:hover { background: #be2f2f; }
 
     #event-count {
       color: var(--muted);
       font-size: 0.95rem;
       margin-bottom: 0.85rem;
+    }
+
+    .links {
+      margin-bottom: 0.85rem;
+    }
+
+    .links a {
+      color: #005fcc;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .links a:hover {
+      text-decoration: underline;
     }
 
     #empty-state {
@@ -147,9 +153,7 @@
       border-bottom: 1px solid var(--border);
     }
 
-    .section:last-child {
-      border-bottom: none;
-    }
+    .section:last-child { border-bottom: none; }
 
     .label {
       font-size: 0.8rem;
@@ -181,6 +185,7 @@
   </div>
 
   <div id="event-count">0 / {{ max_events }} events</div>
+  <div class="links"><a href="/">Back to Home</a></div>
   <div id="empty-state">No events received yet.</div>
   <section id="events"></section>
 </main>
@@ -195,9 +200,10 @@
   const connectionBadge = document.getElementById("connection-badge");
 
   let events = [];
-  let socket = null;
-  let reconnectDelayMs = 1000;
-  let reconnectTimer = null;
+  let latestSeenId = null;
+  let pollDelayMs = 1000;
+  let pollTimer = null;
+  let consecutiveFailures = 0;
 
   function setStatus(statusText, statusClass) {
     connectionBadge.textContent = statusText;
@@ -239,7 +245,6 @@
     const jsonBody = event.body_json !== null ? pretty(event.body_json) : "(none)";
     const formBody = Object.keys(event.form || {}).length ? pretty(event.form) : "(none)";
     const headers = pretty(event.headers || {});
-
     const bodyText = event.body_text || "";
     const bodyLabel = event.body_truncated ? "Raw Body (truncated)" : "Raw Body";
 
@@ -263,73 +268,63 @@
     for (const event of events) {
       eventsRoot.appendChild(renderEvent(event));
     }
-
     eventCount.textContent = events.length + " / " + maxEvents + " events";
     emptyState.style.display = events.length ? "none" : "block";
   }
 
-  function handleMessage(payload) {
-    if (payload.type === "snapshot") {
-      events = (payload.events || []).slice(0, maxEvents);
-      render();
+  function mergeEvents(newEvents) {
+    if (!Array.isArray(newEvents) || !newEvents.length) {
       return;
     }
-
-    if (payload.type === "event") {
-      events.unshift(payload.event);
-      events = events.slice(0, maxEvents);
-      render();
-      return;
-    }
-
-    if (payload.type === "cleared") {
-      events = [];
-      render();
-      return;
-    }
+    events = newEvents.concat(events);
+    events = events.slice(0, maxEvents);
   }
 
-  function scheduleReconnect() {
-    if (reconnectTimer) {
-      return;
+  function scheduleNextPoll(delayMs) {
+    if (pollTimer) {
+      window.clearTimeout(pollTimer);
     }
-
-    setStatus("reconnecting", "reconnecting");
-    reconnectTimer = window.setTimeout(function () {
-      reconnectTimer = null;
-      connect();
-    }, reconnectDelayMs);
-    reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+    pollTimer = window.setTimeout(poll, delayMs);
   }
 
-  function connect() {
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socketUrl = protocol + "://" + window.location.host + "/ws/events";
+  async function poll() {
+    const query = latestSeenId === null ? "" : ("?since_id=" + encodeURIComponent(String(latestSeenId)));
 
-    socket = new WebSocket(socketUrl);
+    try {
+      const response = await fetch("/webhook/events/list" + query, {
+        method: "GET",
+        headers: {
+          "Accept": "application/json"
+        }
+      });
 
-    socket.onopen = function () {
-      reconnectDelayMs = 1000;
-      setStatus("connected", "connected");
-    };
-
-    socket.onmessage = function (event) {
-      try {
-        const payload = JSON.parse(event.data);
-        handleMessage(payload);
-      } catch (err) {
-        console.error("Unable to parse websocket message", err);
+      if (!response.ok) {
+        throw new Error("Polling failed with status " + response.status);
       }
-    };
 
-    socket.onclose = function () {
-      setStatus("disconnected", "disconnected");
-      scheduleReconnect();
-    };
+      const payload = await response.json();
+      if (latestSeenId === null) {
+        events = Array.isArray(payload.events) ? payload.events.slice(0, maxEvents) : [];
+      } else {
+        mergeEvents(payload.events || []);
+      }
 
-    socket.onerror = function () {
-      setStatus("disconnected", "disconnected");
-    };
+      latestSeenId = payload.latest_id;
+      consecutiveFailures = 0;
+      pollDelayMs = 1000;
+      setStatus("connected", "connected");
+      render();
+      scheduleNextPoll(pollDelayMs);
+    } catch (err) {
+      consecutiveFailures += 1;
+      pollDelayMs = Math.min(pollDelayMs * 2, 10000);
+      if (consecutiveFailures >= 3) {
+        setStatus("disconnected", "disconnected");
+      } else {
+        setStatus("reconnecting", "reconnecting");
+      }
+      scheduleNextPoll(pollDelayMs);
+    }
   }
 
   clearBtn.addEventListener("click", function () {
@@ -338,13 +333,19 @@
       headers: {
         "X-CSRFToken": getCookie("csrftoken")
       }
-    }).catch(function (err) {
-      console.error("Failed to clear events", err);
-    });
+    })
+      .then(function () {
+        events = [];
+        latestSeenId = null;
+        render();
+      })
+      .catch(function (err) {
+        console.error("Failed to clear events", err);
+      });
   });
 
   render();
-  connect();
+  poll();
 })();
 </script>
 </body>

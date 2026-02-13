@@ -10,11 +10,20 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
-from importlib.util import find_spec
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+_env_path = BASE_DIR / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
 
 
 # Quick-start development settings - unsuitable for production
@@ -35,8 +44,6 @@ ALLOWED_HOSTS = [
 
 # Application definition
 
-HAS_CHANNELS = find_spec('channels') is not None
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -46,9 +53,6 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'voice',
 ]
-
-if HAS_CHANNELS:
-    INSTALLED_APPS.insert(0, 'channels')
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -79,13 +83,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'webhookserver.wsgi.application'
-
-if HAS_CHANNELS:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        }
-    }
 
 
 # Database
