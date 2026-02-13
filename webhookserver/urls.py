@@ -22,6 +22,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path("", voice_views.home, name="home"),
     path("events", voice_views.events_page, name="view-events"),
+    path("inboundsms", voice_views.inboundsms_page, name="inboundsms-page"),
     path("placecall", voice_views.placecall, name="placecall"),
     path('webhook/', include('voice.urls')),
 ]

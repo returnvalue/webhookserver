@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbound SMS</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #11253b;
+      --muted: #5d6f86;
+      --border: #d9e2ec;
+      --ok: #117a37;
+      --warn: #a56b00;
+      --bad: #9f1d1d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: linear-gradient(155deg, #ffffff 0%, var(--bg) 100%);
+    }
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 0.85rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.6rem;
+    }
+    .badge {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.65rem;
+      font-weight: 700;
+      font-size: 0.82rem;
+      background: #eff4f8;
+      color: var(--muted);
+    }
+    .badge.connected {
+      border-color: #89cf9e;
+      background: #e6f7ec;
+      color: var(--ok);
+    }
+    .badge.reconnecting {
+      border-color: #f1c27c;
+      background: #fff5e8;
+      color: var(--warn);
+    }
+    .badge.disconnected {
+      border-color: #e7a6a6;
+      background: #fcecec;
+      color: var(--bad);
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 0.8rem;
+    }
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .panel strong {
+      color: var(--text);
+    }
+    .links {
+      margin-top: 0.7rem;
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .links a {
+      color: #005fcc;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .links a:hover { text-decoration: underline; }
+    .count {
+      color: var(--muted);
+      margin-bottom: 0.65rem;
+      font-size: 0.95rem;
+    }
+    .msg {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      margin-bottom: 0.7rem;
+      overflow: hidden;
+    }
+    .msg-head {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      background: #f9fbfd;
+      font-size: 0.9rem;
+      display: flex;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pill {
+      display: inline-block;
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      background: #e8eef5;
+      font-weight: 700;
+    }
+    .msg-body {
+      padding: 0.7rem 0.75rem;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.35;
+      font-size: 0.86rem;
+    }
+    #empty {
+      border: 1px dashed var(--border);
+      background: var(--card);
+      color: var(--muted);
+      border-radius: 10px;
+      text-align: center;
+      padding: 1rem;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="header">
+    <h1>Inbound SMS</h1>
+    <span id="connection-badge" class="badge disconnected">disconnected</span>
+  </div>
+
+  <section class="panel">
+    <p>
+      Send an SMS to <strong>{% if virtual_number %}{{ virtual_number }}{% else %}(set VONAGE_VIRTUAL_NUMBER in .env){% endif %}</strong>
+      and it will display on this page.
+    </p>
+    <div class="links">
+      <a href="/">Back to Home</a>
+      <a href="/events">View Events</a>
+    </div>
+  </section>
+
+  <div id="count" class="count">0 / {{ max_sms }} messages</div>
+  <div id="empty">No inbound SMS messages received yet.</div>
+  <section id="messages"></section>
+</main>
+
+<script>
+(function () {
+  const maxSms = Number("{{ max_sms }}");
+  const root = document.getElementById("messages");
+  const count = document.getElementById("count");
+  const empty = document.getElementById("empty");
+  const badge = document.getElementById("connection-badge");
+
+  let messages = [];
+  let latestSeenId = null;
+  let delayMs = 1000;
+  let timer = null;
+  let failures = 0;
+
+  function setStatus(text, klass) {
+    badge.textContent = text;
+    badge.className = "badge " + klass;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function renderMessage(msg) {
+    const wrapper = document.createElement("article");
+    wrapper.className = "msg";
+    wrapper.innerHTML = [
+      '<div class="msg-head">',
+      '<span class="pill">SMS</span>',
+      '<span>from: ' + escapeHtml(msg.from || "unknown") + '</span>',
+      '<span>to: ' + escapeHtml(msg.to || "unknown") + '</span>',
+      '<span>' + escapeHtml(msg.received_at || "") + '</span>',
+      '</div>',
+      '<div class="msg-body">' + escapeHtml(msg.text || "(no text)") + '</div>'
+    ].join("");
+    return wrapper;
+  }
+
+  function render() {
+    root.innerHTML = "";
+    for (const msg of messages) {
+      root.appendChild(renderMessage(msg));
+    }
+    count.textContent = messages.length + " / " + maxSms + " messages";
+    empty.style.display = messages.length ? "none" : "block";
+  }
+
+  function mergeMessages(newMessages) {
+    if (!Array.isArray(newMessages) || !newMessages.length) {
+      return;
+    }
+    messages = newMessages.concat(messages).slice(0, maxSms);
+  }
+
+  function schedule(delay) {
+    if (timer) {
+      window.clearTimeout(timer);
+    }
+    timer = window.setTimeout(poll, delay);
+  }
+
+  async function poll() {
+    const query = latestSeenId === null ? "" : ("?since_id=" + encodeURIComponent(String(latestSeenId)));
+
+    try {
+      const response = await fetch("/webhook/inboundsms/list" + query, {
+        method: "GET",
+        headers: { "Accept": "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error("Polling failed with status " + response.status);
+      }
+
+      const payload = await response.json();
+      if (latestSeenId === null) {
+        messages = Array.isArray(payload.messages) ? payload.messages.slice(0, maxSms) : [];
+      } else {
+        mergeMessages(payload.messages || []);
+      }
+
+      latestSeenId = payload.latest_id;
+      failures = 0;
+      delayMs = 1000;
+      setStatus("connected", "connected");
+      render();
+      schedule(delayMs);
+    } catch (err) {
+      failures += 1;
+      delayMs = Math.min(delayMs * 2, 10000);
+      if (failures >= 3) {
+        setStatus("disconnected", "disconnected");
+      } else {
+        setStatus("reconnecting", "reconnecting");
+      }
+      schedule(delayMs);
+    }
+  }
+
+  render();
+  poll();
+})();
+</script>
+</body>
+</html>

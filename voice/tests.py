@@ -5,11 +5,13 @@ from unittest.mock import Mock, patch
 from django.test import TestCase
 
 from . import event_store
+from . import sms_store
 
 
 class EventsHttpTests(TestCase):
     def setUp(self):
         event_store.clear_events()
+        sms_store.clear_messages()
 
     def test_events_webhook_returns_ok_plain_text(self):
         response = self.client.post(
@@ -141,12 +143,18 @@ class EventsHttpTests(TestCase):
 
 
 class HomeAndPlaceCallTests(TestCase):
+    def setUp(self):
+        event_store.clear_events()
+        sms_store.clear_messages()
+
     def test_home_page_renders_links(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Webhook Server")
         self.assertContains(response, "href=\"/events\"")
         self.assertContains(response, "href=\"/placecall\"")
+        self.assertContains(response, "Receive SMS")
+        self.assertContains(response, "href=\"/inboundsms\"")
 
     def test_placecall_page_renders(self):
         response = self.client.get("/placecall")
@@ -196,3 +204,94 @@ class HomeAndPlaceCallTests(TestCase):
             sent_request.ncco[0].text,
             "This is a simple test of the Vonage Voice API - Thank You",
         )
+
+    def test_inboundsms_page_renders_instructions(self):
+        with patch.dict(os.environ, {"VONAGE_VIRTUAL_NUMBER": "18339893850"}, clear=True):
+            response = self.client.get("/inboundsms")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Inbound SMS")
+        self.assertContains(response, "Send an SMS to")
+        self.assertContains(response, "18339893850")
+        self.assertContains(response, "it will display on this page")
+
+    def test_inboundsms_webhook_stores_message_and_logs_event(self):
+        response = self.client.post(
+            "/webhook/inboundsms",
+            data={
+                "msisdn": "14155550100",
+                "to": "18339893850",
+                "text": "hello from test",
+                "messageId": "abc-1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"ok")
+
+        list_response = self.client.get("/webhook/inboundsms/list")
+        payload = list_response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["messages"][0]["text"], "hello from test")
+        self.assertEqual(payload["messages"][0]["from"], "14155550100")
+        self.assertEqual(payload["messages"][0]["to"], "18339893850")
+
+        events = event_store.list_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["path"], "/webhook/inboundsms")
+
+    def test_inbound_webhook_path_stores_message(self):
+        response = self.client.post(
+            "/webhook/inbound",
+            data={"msisdn": "14155550100", "to": "18339893850", "text": "hello inbound alias"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"ok")
+
+        payload = self.client.get("/webhook/inboundsms/list").json()
+        self.assertEqual(payload["messages"][0]["text"], "hello inbound alias")
+        self.assertEqual(event_store.list_events()[0]["path"], "/webhook/inbound")
+
+    def test_delivery_webhook_logs_event(self):
+        response = self.client.post(
+            "/webhook/delivery",
+            data={"messageId": "m-1", "status": "delivered", "to": "18339893850"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"ok")
+        self.assertEqual(event_store.list_events()[0]["path"], "/webhook/delivery")
+
+    def test_inboundsms_list_since_id(self):
+        self.client.post(
+            "/webhook/inboundsms",
+            data={"msisdn": "14155550100", "to": "18339893850", "text": "first"},
+        )
+        first_id = sms_store.latest_message_id()
+        self.client.post(
+            "/webhook/inboundsms",
+            data={"msisdn": "14155550101", "to": "18339893850", "text": "second"},
+        )
+
+        response = self.client.get(f"/webhook/inboundsms/list?since_id={first_id}")
+        payload = response.json()
+        self.assertEqual(len(payload["messages"]), 1)
+        self.assertEqual(payload["messages"][0]["text"], "second")
+
+    def test_inbound_webhook_json_body_stores_message_fields(self):
+        response = self.client.post(
+            "/webhook/inbound",
+            data=json.dumps(
+                {
+                    "msisdn": "19784072046",
+                    "to": "18339893850",
+                    "text": "this is a message with some text",
+                    "messageId": "267a1412-f583-4e85-9965-77c5a0508a29",
+                    "type": "text",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = self.client.get("/webhook/inboundsms/list").json()
+        self.assertEqual(payload["messages"][0]["from"], "19784072046")
+        self.assertEqual(payload["messages"][0]["to"], "18339893850")
+        self.assertEqual(payload["messages"][0]["text"], "this is a message with some text")

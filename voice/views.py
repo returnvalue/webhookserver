@@ -11,6 +11,7 @@ from vonage_voice.models.ncco import Talk
 from vonage_voice.models.requests import CreateCallRequest, ToPhone
 
 from . import event_store
+from . import sms_store
 
 E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 
@@ -76,6 +77,62 @@ def events_list(request):
             "events": events,
             "max_events": event_store.MAX_EVENTS,
             "latest_id": event_store.latest_event_id(),
+        }
+    )
+
+
+@ensure_csrf_cookie
+def inboundsms_page(request):
+    lvn = _env_value("VONAGE_VIRTUAL_NUMBER") or _env_value("VONAGE_SOURCE_NUMBER")
+    return render(
+        request,
+        "voice/inboundsms.html",
+        {
+            "virtual_number": lvn,
+            "max_sms": sms_store.MAX_SMS,
+        },
+    )
+
+
+@csrf_exempt
+def inboundsms_webhook(request):
+    if request.method not in {"GET", "POST"}:
+        return HttpResponse("Method not allowed", status=405, content_type="text/plain")
+
+    event_store.add_event(event_store.build_event_from_request(request))
+    sms_store.add_from_request(request)
+    return HttpResponse("ok", content_type="text/plain")
+
+
+@csrf_exempt
+def delivery_webhook(request):
+    if request.method not in {"GET", "POST"}:
+        return HttpResponse("Method not allowed", status=405, content_type="text/plain")
+
+    event_store.add_event(event_store.build_event_from_request(request))
+    return HttpResponse("ok", content_type="text/plain")
+
+
+def inboundsms_list(request):
+    since_id_raw = request.GET.get("since_id")
+    since_id = None
+    if since_id_raw:
+        try:
+            since_id = int(since_id_raw)
+        except ValueError:
+            since_id = None
+
+    if since_id is None:
+        messages = sms_store.list_messages()
+    else:
+        messages = sms_store.list_messages_since(since_id)
+
+    return JsonResponse(
+        {
+            "status": "ok",
+            "messages": messages,
+            "max_sms": sms_store.MAX_SMS,
+            "latest_id": sms_store.latest_message_id(),
         }
     )
 
