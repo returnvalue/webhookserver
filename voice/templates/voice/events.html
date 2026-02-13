@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>View Events</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f2f4f7;
+      --card: #ffffff;
+      --text: #0b1f33;
+      --muted: #5c6b7a;
+      --border: #d9e0e8;
+      --ok: #117a37;
+      --warn: #a56b00;
+      --bad: #9f1d1d;
+      --accent: #0d6efd;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #ffffff, var(--bg));
+      color: var(--text);
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.7rem;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.65rem;
+      font-weight: 600;
+      font-size: 0.85rem;
+      background: #eef3f7;
+      color: var(--muted);
+    }
+
+    .badge.connected {
+      border-color: #89cf9e;
+      background: #e6f7ec;
+      color: var(--ok);
+    }
+
+    .badge.reconnecting {
+      border-color: #f1c27c;
+      background: #fff5e8;
+      color: var(--warn);
+    }
+
+    .badge.disconnected {
+      border-color: #e7a6a6;
+      background: #fcecec;
+      color: var(--bad);
+    }
+
+    button {
+      border: 1px solid #cf3b3b;
+      background: #d63f3f;
+      color: #fff;
+      border-radius: 8px;
+      padding: 0.45rem 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #be2f2f;
+    }
+
+    #event-count {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-bottom: 0.85rem;
+    }
+
+    #empty-state {
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--muted);
+      padding: 1rem;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    .event-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 0.85rem;
+      overflow: hidden;
+    }
+
+    .event-head {
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      background: #f9fbfd;
+      font-size: 0.92rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-block;
+      background: #e8eef5;
+      border-radius: 999px;
+      padding: 0.15rem 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .section {
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section:last-child {
+      border-bottom: none;
+    }
+
+    .label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="header">
+    <h1>View Events</h1>
+    <div class="controls">
+      <span id="connection-badge" class="badge disconnected">disconnected</span>
+      <button id="clear-btn" type="button">Clear</button>
+    </div>
+  </div>
+
+  <div id="event-count">0 / {{ max_events }} events</div>
+  <div id="empty-state">No events received yet.</div>
+  <section id="events"></section>
+</main>
+
+<script>
+(function () {
+  const maxEvents = Number("{{ max_events }}");
+  const eventsRoot = document.getElementById("events");
+  const eventCount = document.getElementById("event-count");
+  const emptyState = document.getElementById("empty-state");
+  const clearBtn = document.getElementById("clear-btn");
+  const connectionBadge = document.getElementById("connection-badge");
+
+  let events = [];
+  let socket = null;
+  let reconnectDelayMs = 1000;
+  let reconnectTimer = null;
+
+  function setStatus(statusText, statusClass) {
+    connectionBadge.textContent = statusText;
+    connectionBadge.className = "badge " + statusClass;
+  }
+
+  function getCookie(name) {
+    const cookies = document.cookie ? document.cookie.split(";") : [];
+    for (const cookie of cookies) {
+      const trimmed = cookie.trim();
+      if (trimmed.startsWith(name + "=")) {
+        return decodeURIComponent(trimmed.substring(name.length + 1));
+      }
+    }
+    return "";
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function pretty(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (err) {
+      return String(value);
+    }
+  }
+
+  function renderEvent(event) {
+    const wrapper = document.createElement("article");
+    wrapper.className = "event-card";
+
+    const jsonBody = event.body_json !== null ? pretty(event.body_json) : "(none)";
+    const formBody = Object.keys(event.form || {}).length ? pretty(event.form) : "(none)";
+    const headers = pretty(event.headers || {});
+
+    const bodyText = event.body_text || "";
+    const bodyLabel = event.body_truncated ? "Raw Body (truncated)" : "Raw Body";
+
+    wrapper.innerHTML = [
+      '<div class="event-head">',
+      '<span class="pill">' + escapeHtml(event.method || "") + '</span>',
+      '<span>' + escapeHtml(event.path || "") + '</span>',
+      '<span>' + escapeHtml(event.received_at || "") + '</span>',
+      '</div>',
+      '<div class="section"><div class="label">Headers</div><pre>' + escapeHtml(headers) + '</pre></div>',
+      '<div class="section"><div class="label">JSON Body</div><pre>' + escapeHtml(jsonBody) + '</pre></div>',
+      '<div class="section"><div class="label">Form Body</div><pre>' + escapeHtml(formBody) + '</pre></div>',
+      '<div class="section"><div class="label">' + bodyLabel + '</div><pre>' + escapeHtml(bodyText) + '</pre></div>'
+    ].join("");
+
+    return wrapper;
+  }
+
+  function render() {
+    eventsRoot.innerHTML = "";
+    for (const event of events) {
+      eventsRoot.appendChild(renderEvent(event));
+    }
+
+    eventCount.textContent = events.length + " / " + maxEvents + " events";
+    emptyState.style.display = events.length ? "none" : "block";
+  }
+
+  function handleMessage(payload) {
+    if (payload.type === "snapshot") {
+      events = (payload.events || []).slice(0, maxEvents);
+      render();
+      return;
+    }
+
+    if (payload.type === "event") {
+      events.unshift(payload.event);
+      events = events.slice(0, maxEvents);
+      render();
+      return;
+    }
+
+    if (payload.type === "cleared") {
+      events = [];
+      render();
+      return;
+    }
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) {
+      return;
+    }
+
+    setStatus("reconnecting", "reconnecting");
+    reconnectTimer = window.setTimeout(function () {
+      reconnectTimer = null;
+      connect();
+    }, reconnectDelayMs);
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+  }
+
+  function connect() {
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const socketUrl = protocol + "://" + window.location.host + "/ws/events";
+
+    socket = new WebSocket(socketUrl);
+
+    socket.onopen = function () {
+      reconnectDelayMs = 1000;
+      setStatus("connected", "connected");
+    };
+
+    socket.onmessage = function (event) {
+      try {
+        const payload = JSON.parse(event.data);
+        handleMessage(payload);
+      } catch (err) {
+        console.error("Unable to parse websocket message", err);
+      }
+    };
+
+    socket.onclose = function () {
+      setStatus("disconnected", "disconnected");
+      scheduleReconnect();
+    };
+
+    socket.onerror = function () {
+      setStatus("disconnected", "disconnected");
+    };
+  }
+
+  clearBtn.addEventListener("click", function () {
+    fetch("/webhook/events/clear", {
+      method: "POST",
+      headers: {
+        "X-CSRFToken": getCookie("csrftoken")
+      }
+    }).catch(function (err) {
+      console.error("Failed to clear events", err);
+    });
+  });
+
+  render();
+  connect();
+})();
+</script>
+</body>
+</html>

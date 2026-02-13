@@ -5,4 +5,5 @@ from . import views
 urlpatterns = [
     path("answer", views.answer, name="answer"),
     path("events", views.events, name="events"),
+    path("events/clear", views.clear_events, name="clear-events"),
 ]

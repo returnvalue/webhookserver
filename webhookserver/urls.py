@@ -16,8 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import include, path
+from voice import views as voice_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path("events", voice_views.events_page, name="view-events"),
     path('webhook/', include('voice.urls')),
 ]
