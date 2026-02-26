@@ -7,6 +7,23 @@ It provides:
 - An inbound SMS viewer (`/inboundsms`) with live message history.
 - A "Place Call" page (`/placecall`) to trigger and hang up outbound test calls via Vonage.
 
+## Screenshots
+
+### Home
+![Home](./home.png)
+
+### View Events
+![View Events](./viewevents.png)
+
+### Inbound SMS
+![Inbound SMS](./inboundsms.png)
+
+### Place Call
+![Place Call](./placecall.png)
+
+### Active Call
+![Active Call](./activecall.png)
+
 ## Requirements
 
 - Python 3.12+ (project currently appears to run on Python 3.14)
