@@ -52,6 +52,8 @@ python manage.py runserver
 
 Open: `http://127.0.0.1:8000/`
 
+Note: When running locally, you need a public tunnel (for example `ngrok`) so Vonage can send webhooks to your machine. Start your tunnel and configure your Vonage webhook URLs to use the generated public HTTPS URL.
+
 ## Environment variables
 
 This project auto-loads `.env` from the repository root.
