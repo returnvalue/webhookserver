@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -11,9 +12,14 @@ from vonage_voice.models.ncco import Talk
 from vonage_voice.models.requests import CreateCallRequest, ToPhone
 
 from . import event_store
+from . import placecall_request_store
 from . import sms_store
 
 E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
+ACTIVE_CALL_STATUSES = {"started", "ringing", "answered"}
+INACTIVE_CALL_STATUSES = {"completed", "cancelled", "timeout", "failed", "busy", "rejected"}
+_active_call_lock = threading.Lock()
+_active_call_uuid = None
 
 
 def home(request):
@@ -154,14 +160,34 @@ def placecall(request):
             )
             is_error = not ok
 
+    return render(request, "voice/placecall.html", _placecall_context(destination, message, is_error))
+
+
+@require_POST
+def placecall_hangup(request):
+    active_call = _get_active_call()
+    if not active_call:
+        return render(
+            request,
+            "voice/placecall.html",
+            _placecall_context("", "No active call to hang up.", True),
+        )
+
+    ok, message = _hangup_active_call(active_call["uuid"])
     return render(
         request,
         "voice/placecall.html",
-        {
-            "destination": destination,
-            "message": message,
-            "is_error": is_error,
-        },
+        _placecall_context("", message, not ok),
+    )
+
+
+@require_POST
+def placecall_requests_clear(request):
+    placecall_request_store.clear_requests()
+    return render(
+        request,
+        "voice/placecall.html",
+        _placecall_context("", "Cleared Place Call API request log.", False),
     )
 
 
@@ -193,6 +219,22 @@ def _trigger_outbound_call(destination):
 
         destination_digits = destination.lstrip("+")
         source_digits = source_number.lstrip("+")
+        request_payload = {
+            "to": [{"type": "phone", "number": destination_digits}],
+            "from": {"type": "phone", "number": source_digits},
+            "ncco": [
+                {
+                    "action": "talk",
+                    "text": "This is a simple test of the Vonage Voice API - Thank You",
+                }
+            ],
+        }
+        placecall_request_store.add_request(
+            action="call",
+            method="POST",
+            url="https://api.nexmo.com/v1/calls",
+            body=request_payload,
+        )
         request = CreateCallRequest(
             to=[ToPhone(number=destination_digits)],
             from_=Phone(number=source_digits),
@@ -205,9 +247,33 @@ def _trigger_outbound_call(destination):
 
         response = client.voice.create_call(request)
         call_uuid = getattr(response, "uuid", "unknown")
+        _set_active_call_uuid(call_uuid)
         return True, f"Call triggered to {destination}. UUID: {call_uuid}"
     except Exception as exc:  # broad on purpose to surface SDK/provider errors cleanly
         return False, f"Call failed. {exc}"
+
+
+def _hangup_active_call(call_uuid):
+    try:
+        placecall_request_store.add_request(
+            action="hangup",
+            method="PUT",
+            url=f"https://api.nexmo.com/v1/calls/{call_uuid}",
+            body={"action": "hangup"},
+        )
+        auth = Auth(
+            api_key=_env_value("VONAGE_API_KEY") or None,
+            api_secret=_env_value("VONAGE_API_SECRET") or None,
+            application_id=_env_value("VONAGE_APPLICATION_ID"),
+            private_key=_resolve_private_key(_env_value("VONAGE_PRIVATE_KEY")),
+            signature_secret=_env_value("VONAGE_SIGNATURE_SECRET") or None,
+        )
+        client = Vonage(auth=auth)
+        client.voice.hangup(call_uuid)
+        _clear_active_call_uuid()
+        return True, f"Call {call_uuid} was hung up."
+    except Exception as exc:  # broad on purpose to surface SDK/provider errors cleanly
+        return False, f"Unable to hang up call. {exc}"
 
 
 def _resolve_private_key(raw_value):
@@ -222,3 +288,76 @@ def _resolve_private_key(raw_value):
 
 def _env_value(name):
     return os.environ.get(name, "").strip().strip('"').strip("'")
+
+
+def _placecall_context(destination, message, is_error):
+    active_call = _get_active_call()
+    request_log_entries = placecall_request_store.list_requests()
+    return {
+        "destination": destination,
+        "message": message,
+        "is_error": is_error,
+        "active_call": active_call,
+        "has_active_call": active_call is not None,
+        "request_log_entries": request_log_entries,
+        "has_request_log_entries": bool(request_log_entries),
+    }
+
+
+def _get_active_call():
+    call_uuid = _get_active_call_uuid()
+    if not call_uuid:
+        return None
+
+    try:
+        auth = Auth(
+            api_key=_env_value("VONAGE_API_KEY") or None,
+            api_secret=_env_value("VONAGE_API_SECRET") or None,
+            application_id=_env_value("VONAGE_APPLICATION_ID"),
+            private_key=_resolve_private_key(_env_value("VONAGE_PRIVATE_KEY")),
+            signature_secret=_env_value("VONAGE_SIGNATURE_SECRET") or None,
+        )
+        client = Vonage(auth=auth)
+        call_info = client.voice.get_call(call_uuid)
+        status = _normalize_call_status(getattr(call_info, "status", ""))
+        if status in INACTIVE_CALL_STATUSES:
+            _clear_active_call_uuid()
+            return None
+        if status in ACTIVE_CALL_STATUSES:
+            return {"uuid": call_uuid, "status": status}
+        # Keep call actionable if provider returns an unexpected transient status.
+        return {"uuid": call_uuid, "status": status or "active"}
+    except Exception:
+        # Do not hide hangup button if status lookup fails transiently.
+        return {"uuid": call_uuid, "status": "active"}
+
+
+def _set_active_call_uuid(call_uuid):
+    global _active_call_uuid
+    if not call_uuid:
+        return
+    with _active_call_lock:
+        _active_call_uuid = call_uuid
+
+
+def _get_active_call_uuid():
+    with _active_call_lock:
+        return _active_call_uuid
+
+
+def _clear_active_call_uuid():
+    global _active_call_uuid
+    with _active_call_lock:
+        _active_call_uuid = None
+
+
+def _normalize_call_status(raw_status):
+    if raw_status is None:
+        return ""
+    value = raw_status
+    if hasattr(raw_status, "value"):
+        value = raw_status.value
+    text = str(value).strip().lower()
+    if "." in text:
+        text = text.split(".")[-1]
+    return text

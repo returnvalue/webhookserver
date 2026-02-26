@@ -1,19 +1,3 @@
-"""
-URL configuration for webhookserver project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
 from django.contrib import admin
 from django.urls import include, path
 from voice import views as voice_views
@@ -24,5 +8,7 @@ urlpatterns = [
     path("events", voice_views.events_page, name="view-events"),
     path("inboundsms", voice_views.inboundsms_page, name="inboundsms-page"),
     path("placecall", voice_views.placecall, name="placecall"),
+    path("placecall/hangup", voice_views.placecall_hangup, name="placecall-hangup"),
+    path("placecall/requests/clear", voice_views.placecall_requests_clear, name="placecall-requests-clear"),
     path('webhook/', include('voice.urls')),
 ]

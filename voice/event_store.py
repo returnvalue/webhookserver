@@ -8,6 +8,8 @@ BODY_TEXT_LIMIT = 16 * 1024
 _lock = threading.Lock()
 _events = []
 _next_event_id = 1
+SENSITIVE_HEADERS = {"authorization", "proxy-authorization"}
+SENSITIVE_JSON_KEYS = {"access_token", "jwt"}
 
 
 def _normalize_querydict(query_dict):
@@ -16,6 +18,34 @@ def _normalize_querydict(query_dict):
         values = query_dict.getlist(key)
         normalized[key] = values[0] if len(values) == 1 else values
     return normalized
+
+
+def _sanitize_headers(headers):
+    sanitized = {}
+    for key, value in headers.items():
+        if key in SENSITIVE_HEADERS and value:
+            lowered = value.lower()
+            if lowered.startswith("bearer "):
+                sanitized[key] = "Bearer [REDACTED]"
+            else:
+                sanitized[key] = "[REDACTED]"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _redact_sensitive_json(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if str(key).lower() in SENSITIVE_JSON_KEYS:
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redact_sensitive_json(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive_json(item) for item in value]
+    return value
 
 
 def build_event_from_request(request):
@@ -31,11 +61,12 @@ def build_event_from_request(request):
     body_json = None
     if content_type and "application/json" in content_type.lower():
         try:
-            body_json = json.loads(raw_body.decode("utf-8", errors="replace"))
+            body_json = _redact_sensitive_json(json.loads(raw_body.decode("utf-8", errors="replace")))
+            body_text = json.dumps(body_json, separators=(",", ":"), ensure_ascii=False)
         except json.JSONDecodeError:
             body_json = None
 
-    headers = {key.lower(): value for key, value in request.headers.items()}
+    headers = _sanitize_headers({key.lower(): value for key, value in request.headers.items()})
 
     event = {
         "received_at": datetime.now(UTC).isoformat(),

@@ -10,19 +10,24 @@ It provides:
 ## Screenshots
 
 ### Home
+The landing page for the local webhook server. It provides quick navigation to event logs, inbound SMS monitoring, and outbound call testing.
 ![Home](./home.png)
 
-### View Events
-![View Events](./viewevents.png)
-
-### Inbound SMS
-![Inbound SMS](./inboundsms.png)
-
 ### Place Call
+Use this page to place an outbound test call to an E.164 phone number using the configured Vonage application credentials. It also shows captured call request payloads for debugging.
 ![Place Call](./placecall.png)
 
 ### Active Call
+This state appears after a call is successfully created and tracked as active. It exposes a Hang Up action so you can end the current call directly from the UI.
 ![Active Call](./activecall.png)
+
+### Inbound SMS
+This page displays inbound SMS messages received by the webhook endpoints. It helps verify number routing and payload parsing during local testing.
+![Inbound SMS](./inboundsms.png)
+
+### View Events
+The event viewer captures incoming webhook requests, including headers and payloads, in a rolling in-memory log. It is useful for inspecting raw webhook traffic and troubleshooting integrations.
+![View Events](./viewevents.png)
 
 ## Requirements
 

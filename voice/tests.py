@@ -5,7 +5,14 @@ from unittest.mock import Mock, patch
 from django.test import TestCase
 
 from . import event_store
+from . import placecall_request_store
 from . import sms_store
+from . import views
+
+
+class _EnumLikeStatus:
+    def __init__(self, value):
+        self.value = value
 
 
 class EventsHttpTests(TestCase):
@@ -30,6 +37,7 @@ class EventsHttpTests(TestCase):
             data=json.dumps({"hello": "world"}),
             content_type="application/json",
             HTTP_X_TRACE_ID="abc123",
+            HTTP_AUTHORIZATION="Bearer super-secret-token",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -41,6 +49,28 @@ class EventsHttpTests(TestCase):
         self.assertEqual(event["query"], {"source": "unit"})
         self.assertEqual(event["body_json"], {"hello": "world"})
         self.assertEqual(event["headers"]["x-trace-id"], "abc123")
+        self.assertEqual(event["headers"]["authorization"], "Bearer [REDACTED]")
+
+    def test_events_webhook_redacts_access_token_and_jwt_in_json_body(self):
+        response = self.client.post(
+            "/webhook/events",
+            data=json.dumps(
+                {
+                    "api_key": "visible-key",
+                    "access_token": "secret-access-token",
+                    "nested": {"jwt": "secret-jwt"},
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        event = event_store.list_events()[0]
+        self.assertEqual(event["body_json"]["api_key"], "visible-key")
+        self.assertEqual(event["body_json"]["access_token"], "[REDACTED]")
+        self.assertEqual(event["body_json"]["nested"]["jwt"], "[REDACTED]")
+        self.assertIn("\"access_token\":\"[REDACTED]\"", event["body_text"])
+        self.assertIn("\"jwt\":\"[REDACTED]\"", event["body_text"])
 
     def test_retention_keeps_latest_max_events(self):
         for idx in range(event_store.MAX_EVENTS + 5):
@@ -146,6 +176,8 @@ class HomeAndPlaceCallTests(TestCase):
     def setUp(self):
         event_store.clear_events()
         sms_store.clear_messages()
+        views._clear_active_call_uuid()
+        placecall_request_store.clear_requests()
 
     def test_home_page_renders_links(self):
         response = self.client.get("/")
@@ -161,6 +193,8 @@ class HomeAndPlaceCallTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Place Call")
         self.assertContains(response, "Destination Number")
+        self.assertNotContains(response, "Hang Up Active Call")
+        self.assertContains(response, "Place Call API Requests")
 
     def test_placecall_rejects_invalid_number(self):
         response = self.client.post("/placecall", data={"destination": "555-123-4567"})
@@ -180,6 +214,7 @@ class HomeAndPlaceCallTests(TestCase):
     def test_placecall_triggers_call_on_valid_input(self, mocked_vonage):
         mocked_client = Mock()
         mocked_client.voice.create_call.return_value = Mock(uuid="abc-123")
+        mocked_client.voice.get_call.return_value = Mock(status="started")
         mocked_vonage.return_value = mocked_client
 
         with patch.dict(
@@ -198,12 +233,93 @@ class HomeAndPlaceCallTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Call triggered to +15551234567. UUID: abc-123")
+        self.assertContains(response, "Hang Up Active Call")
+        self.assertContains(response, "https://api.nexmo.com/v1/calls")
+        self.assertContains(response, "POST")
         self.assertEqual(mocked_client.voice.create_call.call_count, 1)
         sent_request = mocked_client.voice.create_call.call_args.args[0]
         self.assertEqual(
             sent_request.ncco[0].text,
             "This is a simple test of the Vonage Voice API - Thank You",
         )
+
+    @patch("voice.views.Vonage")
+    def test_placecall_hangup_ends_current_active_call(self, mocked_vonage):
+        mocked_client = Mock()
+        mocked_client.voice.create_call.return_value = Mock(uuid="abc-123")
+        mocked_client.voice.get_call.return_value = Mock(status="started")
+        mocked_vonage.return_value = mocked_client
+
+        with patch.dict(
+            os.environ,
+            {
+                "VONAGE_API_KEY": "key",
+                "VONAGE_API_SECRET": "secret",
+                "VONAGE_APPLICATION_ID": "app-id",
+                "VONAGE_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+                "VONAGE_SIGNATURE_SECRET": "sig-secret",
+                "VONAGE_SOURCE_NUMBER": "+15550001111",
+            },
+            clear=True,
+        ):
+            self.client.post("/placecall", data={"destination": "+15551234567"})
+            response = self.client.post("/placecall/hangup")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "was hung up")
+        self.assertContains(response, "https://api.nexmo.com/v1/calls/abc-123")
+        self.assertContains(response, "PUT")
+        self.assertEqual(mocked_client.voice.hangup.call_count, 1)
+
+    @patch("voice.views.Vonage")
+    def test_placecall_request_log_clear(self, mocked_vonage):
+        mocked_client = Mock()
+        mocked_client.voice.create_call.return_value = Mock(uuid="abc-123")
+        mocked_client.voice.get_call.return_value = Mock(status="started")
+        mocked_vonage.return_value = mocked_client
+
+        with patch.dict(
+            os.environ,
+            {
+                "VONAGE_API_KEY": "key",
+                "VONAGE_API_SECRET": "secret",
+                "VONAGE_APPLICATION_ID": "app-id",
+                "VONAGE_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+                "VONAGE_SIGNATURE_SECRET": "sig-secret",
+                "VONAGE_SOURCE_NUMBER": "+15550001111",
+            },
+            clear=True,
+        ):
+            self.client.post("/placecall", data={"destination": "+15551234567"})
+            response = self.client.post("/placecall/requests/clear")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cleared Place Call API request log.")
+        self.assertContains(response, "No call API requests captured yet.")
+
+    @patch("voice.views.Vonage")
+    def test_placecall_shows_hangup_for_enum_like_status(self, mocked_vonage):
+        mocked_client = Mock()
+        mocked_client.voice.create_call.return_value = Mock(uuid="abc-123")
+        mocked_client.voice.get_call.return_value = Mock(status=_EnumLikeStatus("started"))
+        mocked_vonage.return_value = mocked_client
+
+        with patch.dict(
+            os.environ,
+            {
+                "VONAGE_API_KEY": "key",
+                "VONAGE_API_SECRET": "secret",
+                "VONAGE_APPLICATION_ID": "app-id",
+                "VONAGE_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+                "VONAGE_SIGNATURE_SECRET": "sig-secret",
+                "VONAGE_SOURCE_NUMBER": "+15550001111",
+            },
+            clear=True,
+        ):
+            response = self.client.post("/placecall", data={"destination": "+15551234567"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Hang Up Active Call")
 
     def test_inboundsms_page_renders_instructions(self):
         with patch.dict(os.environ, {"VONAGE_VIRTUAL_NUMBER": "18339893850"}, clear=True):

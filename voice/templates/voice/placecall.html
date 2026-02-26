@@ -100,6 +100,45 @@
       font-weight: 700;
     }
     .links a:hover { text-decoration: underline; }
+    .reqlog {
+      margin-top: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.7rem;
+      background: #fafcff;
+    }
+    .reqlog h2 {
+      margin: 0 0 0.6rem 0;
+      font-size: 1rem;
+    }
+    .reqentry {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 8px;
+      margin-bottom: 0.6rem;
+      overflow: hidden;
+    }
+    .reqhead {
+      background: #f3f7fb;
+      border-bottom: 1px solid var(--border);
+      padding: 0.45rem 0.55rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+    .reqbody {
+      padding: 0.5rem 0.55rem;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
@@ -115,6 +154,14 @@
       <button type="submit">Call</button>
     </form>
 
+    {% if has_active_call %}
+      <form method="post" action="/placecall/hangup" style="margin-top: 0.8rem;">
+        {% csrf_token %}
+        <button type="submit" style="background:#b3261e;">Hang Up Active Call</button>
+      </form>
+      <p class="sub" style="margin-top:0.6rem;margin-bottom:0;">Active call UUID: {{ active_call.uuid }} ({{ active_call.status }})</p>
+    {% endif %}
+
     {% if message %}
       <div class="msg {% if is_error %}err{% else %}ok{% endif %}">{{ message }}</div>
     {% endif %}
@@ -123,6 +170,36 @@
       <a href="/">Back to Home</a>
       <a href="/events">View Events</a>
     </div>
+
+    <section class="reqlog">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+        <h2>Place Call API Requests</h2>
+        <form method="post" action="/placecall/requests/clear">
+          {% csrf_token %}
+          <button type="submit" style="background:#6b7280;">Clear</button>
+        </form>
+      </div>
+
+      {% if has_request_log_entries %}
+        {% for req in request_log_entries %}
+          <article class="reqentry">
+            <div class="reqhead">
+              <span>{{ req.action|upper }}</span>
+              <span>{{ req.method }}</span>
+              <span>{{ req.recorded_at }}</span>
+            </div>
+            <div class="reqbody">
+              <pre>URL: {{ req.url }}
+
+Body:
+{{ req.body|pprint }}</pre>
+            </div>
+          </article>
+        {% endfor %}
+      {% else %}
+        <p class="sub" style="margin:0;">No call API requests captured yet.</p>
+      {% endif %}
+    </section>
   </section>
 </main>
 </body>
