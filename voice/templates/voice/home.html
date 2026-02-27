@@ -33,7 +33,12 @@
     .grid {
       display: grid;
       gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    @media (max-width: 700px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
     }
     .card {
       background: var(--card);
@@ -60,6 +65,13 @@
     .card a:hover {
       text-decoration: underline;
     }
+    .endpoint {
+      display: inline-block;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+      color: var(--link);
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -67,21 +79,27 @@
   <h1>Webhook Server</h1>
   <div class="grid">
     <section class="card">
-      <h2>View Events</h2>
-      <p>Watch incoming webhook events update on a live page as they arrive.</p>
-      <a href="/events">Open View Events</a>
-    </section>
-
-    <section class="card">
       <h2>Place Call</h2>
       <p>Enter a destination phone number and trigger an outbound call from this app.</p>
       <a href="/placecall">Open Place Call</a>
     </section>
 
     <section class="card">
+      <h2>Receive Call</h2>
+      <p>Dial your Vonage LVN to hear a friendly greeing via the /answer webhook of this server.</p>
+      <span class="endpoint">Webhook: POST /webhook/answer</span>
+    </section>
+
+    <section class="card">
       <h2>Receive SMS</h2>
       <p>Click below then send an SMS to your LVN to display a message.</p>
       <a href="/inboundsms">Get an SMS here</a>
+    </section>
+
+    <section class="card">
+      <h2>View Events</h2>
+      <p>Watch incoming webhook events update on a live page as they arrive.</p>
+      <a href="/events">Open View Events</a>
     </section>
   </div>
 </main>

@@ -32,7 +32,7 @@ def answer(request):
     ncco = [
         {
             "action": "talk",
-            "text": "Thanks for calling. Your webhook server is running.",
+            "text": "Thanks for calling the webhook server.  Have a great day!",
         }
     ]
     return JsonResponse(ncco, safe=False)

@@ -11,7 +11,7 @@ It provides:
 
 ### Home
 The landing page for the local webhook server. It provides quick navigation to event logs, inbound SMS monitoring, and outbound call testing.
-![Home](./home.png)
+![Home](./homescreen.png)
 
 ### Place Call
 Use this page to place an outbound test call to an E.164 phone number using the configured Vonage application credentials. It also shows captured call request payloads for debugging.
